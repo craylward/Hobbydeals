@@ -1,0 +1,397 @@
+<?php
+/*
+Plugin Name: MLA Custom Taxonomy Example
+Plugin URI: http://fairtradejudaica.org/media-library-assistant-a-wordpress-plugin/
+Description: Defines custom taxonomies and uses mla_term_list to provide mla_gallery filtering.
+Author: David Lingren
+Version: 1.02
+Author URI: http://fairtradejudaica.org/our-story/staff/
+
+Copyright 2016 David Lingren
+
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You can get a copy of the GNU General Public License by writing to the
+	Free Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110, USA
+*/
+
+/**
+ * Class MLA Custom Taxonomy Example Defines custom taxonomies and uses mla_term_list
+ * to provide mla_gallery filtering
+ *
+ * Created for support topic "How do I provide a front-end search of my media items using Custom Fields?"
+ * opened on 4/15/2016 by "direys":
+ * https://wordpress.org/support/topic/how-do-i-provide-a-front-end-search-of-my-media-items-using-custom-fields
+ *
+ * Enhanced for support topic "Dynamic search and filters"
+ * opened on 5/28/2016 by "ghislainsc"
+ * https://wordpress.org/support/topic/dynamic-search-and-filters#post-8480233
+ *
+ * @package MLA Custom Taxonomy Example
+ * @since 1.00
+ */
+class MLACustomTaxonomyExample {
+	/**
+	 * Initialization function, similar to __construct()
+	 *
+	 * @since 1.00
+	 */
+	public static function initialize() {
+		// Comment out the next line to eliminate the custom taxonomies
+		self::_build_taxonomies();
+
+		// The filters are only useful for front-end posts/pages; exit if in the admin section
+		if ( is_admin() )
+			return;
+
+		add_filter( 'mla_term_list_attributes', 'MLACustomTaxonomyExample::mla_term_list_attributes', 10, 1 );
+		add_filter( 'mla_gallery_attributes', 'MLACustomTaxonomyExample::mla_gallery_attributes', 10, 1 );
+
+		// Add the custom shortcode for generating the items per page
+		add_shortcode( 'mcte_per_page', 'MLACustomTaxonomyExample::mcte_per_page' );
+
+		// Add the custom shortcode for generating "sticky" term search text boxes
+		add_shortcode( 'mcte_terms_search', 'MLACustomTaxonomyExample::mcte_terms_search' );
+	}
+
+	/**
+	 * Registers Species, Rooms and Finishes custom taxonomies
+	 *
+	 * @since 1.00
+	 *
+	 * @return	void
+	 */
+	private static function _build_taxonomies( ) {
+		$labels = array(
+			'name' => 'Species',
+			'singular_name' => 'Species',
+			'search_items' => 'Search Species',
+			'all_items' => 'All Species',
+			'parent_item' => 'Parent Species',
+			'parent_item_colon' => 'Parent Species:',
+			'edit_item' => 'Edit Species',
+			'update_item' => 'Update Species',
+			'add_new_item' => 'Add New Species',
+			'new_item_name' => 'New Species',
+			'menu_name' => 'Species',
+		);
+
+		register_taxonomy(
+			'species',
+			array( 'attachment' ),
+			array(
+			  'hierarchical' => true,
+			  'labels' => $labels,
+			  'show_ui' => true,
+			  'query_var' => true,
+			  'rewrite' => true,
+			  'update_count_callback' => '_update_generic_term_count'
+			)
+		);
+
+		$labels = array(
+			'name' => 'Rooms',
+			'singular_name' => 'Room',
+			'search_items' => 'Search Rooms',
+			'all_items' => 'All Rooms',
+			'parent_item' => 'Parent Room',
+			'parent_item_colon' => 'Parent Room:',
+			'edit_item' => 'Edit Room',
+			'update_item' => 'Update Room',
+			'add_new_item' => 'Add New Room',
+			'new_item_name' => 'New Room',
+			'menu_name' => 'Room',
+		);
+
+		register_taxonomy(
+			'room',
+			array( 'attachment' ),
+			array(
+			  'hierarchical' => false,
+			  'labels' => $labels,
+			  'show_ui' => true,
+			  'query_var' => true,
+			  'rewrite' => true,
+			  'update_count_callback' => '_update_generic_term_count'
+			)
+		);
+
+		$labels = array(
+			'name' => 'Finishes',
+			'singular_name' => 'Finish',
+			'search_items' => 'Search Finishes',
+			'all_items' => 'All Finishes',
+			'parent_item' => 'Parent Finish',
+			'parent_item_colon' => 'Parent Finish:',
+			'edit_item' => 'Edit Finish',
+			'update_item' => 'Update Finish',
+			'add_new_item' => 'Add New Finish',
+			'new_item_name' => 'New Finish',
+			'menu_name' => 'Finish',
+		);
+
+		register_taxonomy(
+			'finish',
+			array( 'attachment' ),
+			array(
+			  'hierarchical' => false,
+			  'labels' => $labels,
+			  'show_ui' => true,
+			  'query_var' => true,
+			  'rewrite' => true,
+			  'update_count_callback' => '_update_generic_term_count'
+			)
+		);
+	} // _build_taxonomies
+
+	/**
+	 * Look for 'mcte_filters' that pass the selected terms from page to page of a paginated gallery
+	 *
+	 * The $shortcode_attributes array is where you will find any of your own parameters that are coded in the
+	 * shortcode, e.g., [mla_term_list use_filters=true].
+	 *
+	 * @since 1.00
+	 *
+	 * @param	array	the shortcode parameters passed in to the shortcode
+	 */
+	public static function mla_term_list_attributes( $shortcode_attributes ) {
+		
+		// See if this is a "filtered" term list
+		if ( !empty( $shortcode_attributes['use_filters'] )  && ( 'true' == strtolower( $shortcode_attributes['use_filters'] ) ) ) {
+			// Pagination links, e.g. Previous or Next, have mcte_filters that encode the form parameters
+			if ( !empty( $_REQUEST['mcte_filters'] ) ) {
+				$filters = json_decode( trim( stripslashes( $_REQUEST['mcte_filters'] ), '"' ), true );
+				
+				if ( !empty( $filters['tax_input'] ) ) {
+					$_REQUEST['tax_input'] = $filters['tax_input'];
+				}
+			}
+			
+			// If nothing is set for this taxonomy we're done
+			if ( empty( $_REQUEST['tax_input'] ) || !array_key_exists( $shortcode_attributes['taxonomy'], $_REQUEST['tax_input'] ) ) {
+				return $shortcode_attributes;
+			}
+			
+			$terms = $_REQUEST['tax_input'][ $shortcode_attributes['taxonomy'] ];
+
+			// Check for a dropdown control with "All Terms" selected
+			$option_all = array_search( '0', $terms );
+			if ( false !== $option_all ) {
+				unset( $terms[ $option_all ] );
+			}
+			
+			// Pass selected terms to the shortcode
+			if ( !empty( $terms ) ) {
+				$shortcode_attributes[ $shortcode_attributes['mla_item_parameter'] ] = implode( ',', $_REQUEST['tax_input'][ $shortcode_attributes['taxonomy'] ] );
+			}
+			
+			unset( $shortcode_attributes['use_filters'] );
+		}
+
+		return $shortcode_attributes;
+	} // mla_term_list_attributes
+
+	/**
+	 * Add the taxonomy query to the shortcode, limit posts_per_page and encode filters for pagination links
+	 *
+	 * The $shortcode_attributes array is where you will find any of your own parameters that are coded in the
+	 * shortcode, e.g., [mla_gallery random_category="abc"].
+	 *
+	 * @since 1.00
+	 *
+	 * @param	array	the shortcode parameters passed in to the shortcode
+	 */
+	public static function mla_gallery_attributes( $shortcode_attributes ) {
+		/*
+		 * Only process shortcodes that allow filters
+		 */
+		if ( empty( $shortcode_attributes['add_filters_to'] ) ) {
+			return $shortcode_attributes;
+		}
+		
+		// Unpack filter values encoded for pagination links
+		if ( !empty( $_REQUEST['mcte_filters'] ) ) {
+			$filters = json_decode( trim( stripslashes( $_REQUEST['mcte_filters'] ), '"' ), true );
+				
+			if ( isset( $filters['mcte_terms_search'] ) ) {
+				$_REQUEST['mcte_terms_search'] = $filters['mcte_terms_search'];
+			}
+			
+			if ( isset( $filters['tax_input'] ) ) {
+				$_REQUEST['tax_input'] = $filters['tax_input'];
+			}
+		}
+				
+		// Adjust posts_per_page/numberposts
+		if ( !empty( $_REQUEST['mcte_per_page'] ) ) {
+			if ( isset( $shortcode_attributes['numberposts'] ) && ! isset( $shortcode_attributes['posts_per_page'] )) {
+				$shortcode_attributes['posts_per_page'] = $shortcode_attributes['numberposts'];
+				unset( $shortcode_attributes['numberposts'] );
+			}
+
+			$shortcode_attributes['posts_per_page'] = $_REQUEST['mcte_per_page'];
+		}
+
+		// Add the terms search parameters, if present
+		if ( !empty( $_REQUEST['mcte_terms_search'] ) && is_array( $_REQUEST['mcte_terms_search'] ) && !empty( $_REQUEST['mcte_terms_search']['mla_terms_phrases'] ) ) {
+			$mcte_terms_search = $_REQUEST['mcte_terms_search'];
+			foreach( $mcte_terms_search as $key => $value ) {
+				if ( !empty( $value ) ) {
+					$shortcode_attributes[ $key ] = $value;
+				}
+			}
+		} else {
+			$mcte_terms_search = array();
+		}
+
+		// Add the taxonomy filter(s), if present
+		$taxonomy = $shortcode_attributes['add_filters_to'];
+		$tax_input = !empty( $_REQUEST['tax_input'] ) ? $_REQUEST['tax_input'] : array();
+		
+		if ( ! ( empty( $shortcode_attributes[ $taxonomy ] ) && empty( $tax_input ) ) ) {
+			$shortcode_attributes['tax_query'] = "array( 'relation' => 'AND', ";
+
+			// Look for the optional "simple taxonomy query" as an initial filter
+			if ( !empty( $shortcode_attributes[ $taxonomy ] ) ) {
+				$values = "array( '" . implode( "', '", explode( ',', $shortcode_attributes[ $taxonomy ] ) ) . "' )";
+				$shortcode_attributes['tax_query'] .= "array('taxonomy' => '{$taxonomy}' ,'field' => 'slug','terms' => {$values}, 'operator' => 'IN'), ";
+				unset( $shortcode_attributes[ $taxonomy ] );
+			}
+
+			foreach ( $tax_input as $taxonomy => $terms ) {
+				// Check for a dropdown control with "All Terms" selected
+				$option_all = array_search( '0', $terms );
+				if ( false !== $option_all ) {
+					unset( $terms[ $option_all ] );
+				}
+				
+				if ( !empty( $terms ) ) {
+					$values = 'array( ' . implode( ',', $terms ) . ' )';
+					$shortcode_attributes['tax_query'] .= "array('taxonomy' => '{$taxonomy}' ,'field' => 'term_id','terms' => {$values}, 'operator' => 'IN'), ";
+				}
+			}
+
+			$shortcode_attributes['tax_query'] .= ')';
+		}
+		
+		/*
+		 * Add the filter settings to pagination URLs
+		 */
+		if ( !empty( $shortcode_attributes['mla_output'] ) ) {
+			
+			$filters = urlencode( json_encode( array( 'tax_input' => $tax_input, 'mcte_terms_search' => $mcte_terms_search ) ) );
+			$shortcode_attributes['mla_link_href'] = '[+new_url+]?[+new_page_text+]&mcte_filters=' . $filters;
+
+			if ( !empty( $shortcode_attributes['posts_per_page'] ) ) {
+				$shortcode_attributes['mla_link_href'] .= '&mcte_per_page=' . $shortcode_attributes['posts_per_page'];
+			}
+		}
+
+		unset( $shortcode_attributes['add_filters_to'] );
+		return $shortcode_attributes;
+	} // mla_gallery_attributes
+
+	/**
+	 * Items per page shortcode
+	 *
+	 * This shortcode generates an HTML text box with a default mcte_per_page value.
+	 *
+	 * @since 1.01
+	 *
+	 * @param	array	the shortcode parameters
+	 *
+	 * @return	string	HTML markup for the generated form
+	 */
+	public static function mcte_per_page( $attr ) {
+		if ( isset( $attr['numberposts'] ) && ! isset( $attr['posts_per_page'] )) {
+			$attr['posts_per_page'] = $attr['numberposts'];
+			unset( $attr['numberposts'] );
+		}
+
+		if ( !empty( $_REQUEST['mcte_per_page'] ) ) {
+			$posts_per_page = $_REQUEST['mcte_per_page'];
+		} else {
+			$posts_per_page = isset( $attr['posts_per_page'] ) ? $attr['posts_per_page'] : 6;
+		}
+		
+		return '<input name="mcte_per_page" id="mcte-per-page" type="text" size="2" value="' . $posts_per_page . '" />';
+	} // mcte_per_page
+
+	/**
+	 * Terms search generator shortcode
+	 *
+	 * This shortcode generates an HTML text box with a default mla_terms_phrases value,
+	 * and adds hidden parameters for the other Terms Search parameters
+	 *
+	 * @since 1.01
+	 *
+	 * @param	array	the shortcode parameters
+	 *
+	 * @return	string	HTML markup for the generated form
+	 */
+	public static function mcte_terms_search( $attr ) {
+		$default_arguments = array(
+			'mla_terms_phrases' => '',
+			'mla_terms_taxonomies' => '',
+			'mla_phrase_delimiter' => '',
+			'mla_phrase_connector' => '',
+			'mla_term_connector' => '',
+		);
+
+		// Make sure $attr is an array, even if it's empty
+		if ( empty( $attr ) ) {
+			$attr = array();
+		} elseif ( is_string( $attr ) ) {
+			$attr = shortcode_parse_atts( $attr );
+		}
+
+		// Accept only the attributes we need and supply defaults
+		$arguments = shortcode_atts( $default_arguments, $attr );
+
+		// Pagination links, e.g. Previous or Next, have mcte_filters that encode the form parameters
+		if ( !empty( $_REQUEST['mcte_filters'] ) ) {
+			$filters = json_decode( trim( stripslashes( $_REQUEST['mcte_filters'] ), '"' ), true );
+			
+			if ( !empty( $filters['mcte_terms_search'] ) ) {
+				$_REQUEST['mcte_terms_search'] = $filters['mcte_terms_search'];
+			}
+		}
+
+		// mcte_terms_search has settings from the form or pagination link
+		if ( !empty( $_REQUEST['mcte_terms_search'] ) && is_array( $_REQUEST['mcte_terms_search'] ) ) {
+			foreach ( $arguments as $key => $value ) {
+				if ( !empty( $_REQUEST['mcte_terms_search'][ $key ] ) ) {
+					$arguments[ $key ] = $_REQUEST['mcte_terms_search'][ $key ];
+				}
+			}
+		}
+
+		// Always supply the terms phrases text box
+		$return_value = '<input name="mcte_terms_search[mla_terms_phrases]" id="mcte-terms-phrases" type="text" size="20" value="' . $arguments['mla_terms_phrases'] . "\" />\n";		
+		unset( $arguments['mla_terms_phrases'] );
+		
+		// Add optional parameters
+		foreach( $arguments as $key => $value ) {
+			if ( !empty( $value ) ) {
+				$id_value = str_replace( '_', '-', substr( $key, 4 ) );
+				$return_value .= sprintf( '<input name="mcte_terms_search[%1$s]" id="mcte-%2$s" type="hidden" value="%3$s" />%4$s', $key, $id_value, $value, "\n" );		
+			}
+		}
+		
+		return $return_value;
+	} // mcte_terms_search
+} // Class MLACustomTaxonomyExample
+
+/*
+ * Install the filters at an early opportunity
+ */
+add_action('init', 'MLACustomTaxonomyExample::initialize');
+?>
